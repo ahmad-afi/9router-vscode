@@ -56,29 +56,52 @@ Go kerja semua (HTTP, exec, logic), TS cuma glue code (~200 baris).
 {"id":1,"method":"tool.result","params":{"stdout":"ok\n","exitCode":0}}
 ```
 
-## Phase 1 — MVP (connect + selection + stream)
+## Phase 1 — MVP (connect + selection + stream) ✅
 
-- [ ] `go/` — Go binary: baca NDJSON dari stdin, panggil 9router, stream chunk ke stdout
-- [ ] `go/` — HTTP client ke 9router (SSE/stream support, configurable endpoint + key)
-- [ ] `src/` — TS shim: baca `editor.selection`, kirim ke Go binary, stream response
-- [ ] `src/` — Register Chat Participant (`vscode.chat.createChatParticipant`)
-- [ ] `src/` — Settings: `9router.endpoint`, `9router.apiKey`, `9router.model`
-- [ ] `package.json` — extension manifest, activation events, contributes
-- [ ] Build: `go build` untuk binary, `esbuild` untuk extension
+- [x] `go/` — Go binary: baca NDJSON dari stdin, panggil 9router, stream chunk ke stdout
+- [x] `go/` — HTTP client ke 9router (SSE/stream support, configurable endpoint + key)
+- [x] `src/` — TS shim: baca `editor.selection`, kirim ke Go binary, stream response
+- [x] `src/` — Register Chat Participant (`vscode.chat.createChatParticipant`)
+- [x] `src/` — Settings: `9router.endpoint`, `9router.apiKey`, `9router.model`
+- [x] `package.json` — extension manifest, activation events, contributes
+- [x] Build: `go build` untuk binary, `esbuild` untuk extension
 
-## Phase 2 — Terminal execution
+## Phase 2 — Terminal execution ✅
 
-- [ ] Go serve mode (long-lived process, bukan spawn per request)
-- [ ] Tool-calling: AI minta eksekusi command, Go handle via `os/exec`
-- [ ] TS approve modal: user approve/reject command sebelum eksekusi
-- [ ] Terminal output dikirim balik ke Go untuk context
+- [x] Go serve mode (long-lived process, bukan spawn per request)
+- [x] Tool-calling: AI minta eksekusi command, Go handle via `os/exec`
+- [x] TS approve modal: user approve/reject command sebelum eksekusi
+- [x] Terminal output dikirim balik ke Go untuk context
 
-## Phase 3 — Context & tools
+## Phase 3 — Context & tools ✅
 
-- [ ] Baca file (Go baca langsung dari workspacePath)
-- [ ] Multi-file context
-- [ ] Conversation history (Go manage state)
-- [ ] Diff/apply edit ke file
+- [x] Baca file (Go baca langsung dari workspacePath)
+- [x] Multi-file context
+- [x] Conversation history (Go manage state)
+- [x] Diff/apply edit ke file
+
+## Phase 4 — Agentic loop (next)
+
+- [ ] Re-request model dengan tool output — AI otomatis lanjut setelah terminal exec atau apply edit
+- [ ] Multi-turn tool use (AI bisa request beberapa command berturut-turut)
+- [ ] Tool result dimasukkan ke messages sebagai role "tool" / "user" dengan output
+- [ ] Max tool rounds (anti-infinite loop, cap 10)
+- [ ] Cancellation support (user bisa stop mid-loop)
+
+## Security (all closed) ✅
+
+- [x] SSRF: validate endpoint scheme + block internal IPs
+- [x] API key: refuse to send to non-HTTPS
+- [x] HTTP client timeout (120s) + redirect cap
+- [x] Error body truncation (4KB LimitReader)
+- [x] Endpoint setting scope: machine
+- [x] Engine path: no workspace-folder fallback
+- [x] Monotonic request ID counter
+- [x] TS stdout buffer cap (10MB)
+- [x] stderr: pipe + discard
+- [x] esbuild CVE fix (0.28.1)
+- [x] Terminal safety filter (rm -rf /, mkfs, dd, shutdown, fork bomb, chmod 777)
+- [x] File path traversal protection
 
 ## Project structure (minimal)
 
@@ -123,7 +146,5 @@ npx esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=nod
 
 ## Ceiling notes
 
-- ponytail: Phase 1 pakai spawn-per-request. Upgrade ke serve mode di Phase 2.
-- ponytail: Phase 1 tanpa tool-calling. Terminal exec manual di Phase 2.
-- ponytail: No conversation memory di Phase 1. Add di Phase 3.
+- ponytail: Phase 4 — re-request model dengan tool output untuk true multi-turn agentic loop. Add when user wants AI to auto-continue after tool exec.
 - ponytail: Chat Participant API (bukan custom webview). Native = lebih sedikit kode.
