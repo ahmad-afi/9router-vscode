@@ -1,0 +1,20 @@
+# Go
+bin/
+*.exe
+
+# Node
+node_modules/
+dist/
+out/
+
+# VSCode
+*.vsix
+.vscode-test/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+*.env
