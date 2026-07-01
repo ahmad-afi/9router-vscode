@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -89,14 +90,20 @@ func chat(reqID int, p ChatParams) error {
 	if p.Selection != "" {
 		system += fmt.Sprintf("\n\nThe user has selected this code (%s):\n```%s\n%s\n```", p.Language, p.Language, p.Selection)
 	}
+	for _, f := range p.Files {
+		system += readFileForContext(p.WorkspacePath, f)
+	}
+
+	msgs := []message{{Role: "system", Content: system}}
+	for _, h := range p.History {
+		msgs = append(msgs, message{Role: h.Role, Content: h.Content})
+	}
+	msgs = append(msgs, message{Role: "user", Content: p.Prompt})
 
 	reqBody := chatRequest{
-		Model: p.Model,
-		Messages: []message{
-			{Role: "system", Content: system},
-			{Role: "user", Content: p.Prompt},
-		},
-		Stream: true,
+		Model:    p.Model,
+		Messages: msgs,
+		Stream:   true,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -129,9 +136,11 @@ func chat(reqID int, p ChatParams) error {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	var fullContent strings.Builder
+	var fullContent string
 	inTerminalBlock := false
+	inApplyBlock := false
 	var terminalCmd strings.Builder
+	var applyContent strings.Builder
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -153,7 +162,7 @@ func chat(reqID int, p ChatParams) error {
 		if text == "" {
 			continue
 		}
-		fullContent.WriteString(text)
+		fullContent += text
 
 		if inTerminalBlock {
 			if strings.Contains(text, "```") {
@@ -171,9 +180,35 @@ func chat(reqID int, p ChatParams) error {
 			continue
 		}
 
-		if strings.Contains(fullContent.String(), "```terminal") {
-			idx := strings.LastIndex(fullContent.String(), "```terminal")
-			after := fullContent.String()[idx:]
+		if inApplyBlock {
+			if strings.Contains(text, "```") {
+				inApplyBlock = false
+				raw := strings.TrimSpace(applyContent.String())
+				applyContent.Reset()
+				lines := strings.SplitN(raw, "\n", 2)
+				if len(lines) >= 2 {
+					filePath := strings.TrimSpace(lines[0])
+					content := lines[1]
+					if filePath != "" {
+						if err := requestApplyEdit(reqID, ApplyEditParams{
+							FilePath: filePath,
+							Content:  content,
+						}); err != nil {
+							writeResp(reqID, "chat.chunk", ChunkParams{Text: "\n\n**Edit error:** " + err.Error() + "\n"})
+						}
+					}
+				}
+				continue
+			}
+			applyContent.WriteString(text)
+			continue
+		}
+
+		fc := fullContent
+
+		for strings.Contains(fc, "```terminal") {
+			idx := strings.Index(fc, "```terminal")
+			after := fc[idx:]
 			if rest := strings.TrimPrefix(after, "```terminal"); rest != after {
 				if strings.Contains(rest, "```") {
 					lines := strings.SplitN(rest, "```", 2)
@@ -184,16 +219,58 @@ func chat(reqID int, p ChatParams) error {
 							writeResp(reqID, "chat.chunk", ChunkParams{Text: "\n\n**Tool error:** " + err.Error() + "\n"})
 						}
 					}
-					text = remaining
+					fc = remaining
+					fullContent = remaining
 				} else {
 					inTerminalBlock = true
 					terminalCmd.WriteString(rest)
-					continue
+					fullContent = ""
+					break
 				}
+			} else {
+				break
 			}
 		}
 
-		writeResp(reqID, "chat.chunk", ChunkParams{Text: text})
+		if inTerminalBlock {
+			continue
+		}
+
+		for strings.Contains(fc, "```apply") {
+			idx := strings.Index(fc, "```apply")
+			after := fc[idx:]
+			if rest := strings.TrimPrefix(after, "```apply"); rest != after {
+				if strings.Contains(rest, "```") {
+					lines := strings.SplitN(rest, "```", 2)
+					raw := strings.TrimSpace(lines[0])
+					remaining := strings.TrimPrefix(lines[1], "```")
+					parts := strings.SplitN(raw, "\n", 2)
+					if len(parts) >= 2 {
+						if err := requestApplyEdit(reqID, ApplyEditParams{
+							FilePath: strings.TrimSpace(parts[0]),
+							Content:  parts[1],
+						}); err != nil {
+							writeResp(reqID, "chat.chunk", ChunkParams{Text: "\n\n**Edit error:** " + err.Error() + "\n"})
+						}
+					}
+					fc = remaining
+					fullContent = remaining
+				} else {
+					inApplyBlock = true
+					applyContent.WriteString(rest)
+					fullContent = ""
+					break
+				}
+			} else {
+				break
+			}
+		}
+
+		if inApplyBlock {
+			continue
+		}
+
+		writeResp(reqID, "chat.chunk", ChunkParams{Text: fc})
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -202,8 +279,18 @@ func chat(reqID int, p ChatParams) error {
 	return writeResp(reqID, "chat.done", DoneParams{})
 }
 
+var toolCounter int
+var toolCounterMu sync.Mutex
+
+func nextToolID(reqID int) int {
+	toolCounterMu.Lock()
+	defer toolCounterMu.Unlock()
+	toolCounter++
+	return reqID*10000 + toolCounter
+}
+
 func requestToolExec(reqID int, command, workspacePath string) error {
-	toolID := reqID*1000 + 1
+	toolID := nextToolID(reqID)
 	waiter := registerToolWaiter(toolID)
 
 	writeResp(reqID, "chat.chunk", ChunkParams{Text: "\n\n**Executing:** `" + command + "`\n\n"})
@@ -218,6 +305,7 @@ func requestToolExec(reqID int, command, workspacePath string) error {
 
 	select {
 	case result := <-waiter:
+		cleanupToolWaiter(toolID)
 		output := ""
 		if result.Stdout != "" {
 			output += "```\n" + result.Stdout + "```\n"
@@ -228,6 +316,32 @@ func requestToolExec(reqID int, command, workspacePath string) error {
 		output += fmt.Sprintf("**Exit code:** %d\n\n", result.ExitCode)
 		return writeResp(reqID, "chat.chunk", ChunkParams{Text: output})
 	case <-time.After(60 * time.Second):
+		cleanupToolWaiter(toolID)
 		return fmt.Errorf("tool execution timed out (no response from VSCode)")
+	}
+}
+
+func requestApplyEdit(reqID int, p ApplyEditParams) error {
+	toolID := nextToolID(reqID)
+	waiter := registerToolWaiter(toolID)
+
+	writeResp(reqID, "chat.chunk", ChunkParams{Text: "\n\n**Applying edit to:** `" + p.FilePath + "`\n\n"})
+
+	err := writeResp(toolID, "apply.edit", p)
+	if err != nil {
+		cleanupToolWaiter(toolID)
+		return err
+	}
+
+	select {
+	case result := <-waiter:
+		cleanupToolWaiter(toolID)
+		if result.ExitCode == 0 {
+			return writeResp(reqID, "chat.chunk", ChunkParams{Text: "**Edit applied.**\n\n"})
+		}
+		return writeResp(reqID, "chat.chunk", ChunkParams{Text: "**Edit failed:** " + result.Stderr + "\n\n"})
+	case <-time.After(60 * time.Second):
+		cleanupToolWaiter(toolID)
+		return fmt.Errorf("apply edit timed out (no response from VSCode)")
 	}
 }

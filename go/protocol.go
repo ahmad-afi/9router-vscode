@@ -13,13 +13,15 @@ type Request struct {
 }
 
 type ChatParams struct {
-	Prompt        string `json:"prompt"`
-	Selection     string `json:"selection"`
-	Language      string `json:"language"`
-	WorkspacePath string `json:"workspacePath"`
-	Endpoint      string `json:"endpoint"`
-	APIKey        string `json:"apiKey"`
-	Model         string `json:"model"`
+	Prompt        string         `json:"prompt"`
+	Selection     string         `json:"selection"`
+	Language      string         `json:"language"`
+	WorkspacePath string         `json:"workspacePath"`
+	Endpoint      string         `json:"endpoint"`
+	APIKey        string         `json:"apiKey"`
+	Model         string         `json:"model"`
+	Files         []string       `json:"files"`
+	History       []HistoryEntry `json:"history"`
 }
 
 type Response struct {
@@ -38,6 +40,11 @@ type ErrorParams struct {
 
 type DoneParams struct{}
 
+type HistoryEntry struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type ToolTerminalParams struct {
 	Command       string `json:"command"`
 	WorkspacePath string `json:"workspacePath"`
@@ -49,31 +56,47 @@ type ToolResultParams struct {
 	ExitCode int    `json:"exitCode"`
 }
 
+type ApplyEditParams struct {
+	FilePath string `json:"filePath"`
+	Content  string `json:"content"`
+}
+
+type ApplyEditResultParams struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 var (
 	pendingTools      = make(map[int]chan ToolResultParams)
 	pendingToolsMutex sync.Mutex
 )
 
 func registerToolWaiter(id int) chan ToolResultParams {
-	ch := make(chan ToolResultParams, 1)
 	pendingToolsMutex.Lock()
+	defer pendingToolsMutex.Unlock()
+	if ch, ok := pendingTools[id]; ok {
+		return ch
+	}
+	ch := make(chan ToolResultParams, 1)
 	pendingTools[id] = ch
-	pendingToolsMutex.Unlock()
 	return ch
 }
 
 func deliverToolResult(id int, result ToolResultParams) bool {
 	pendingToolsMutex.Lock()
 	ch, ok := pendingTools[id]
-	if ok {
-		delete(pendingTools, id)
-	}
 	pendingToolsMutex.Unlock()
 	if !ok {
 		return false
 	}
 	ch <- result
 	return true
+}
+
+func cleanupToolWaiter(id int) {
+	pendingToolsMutex.Lock()
+	delete(pendingTools, id)
+	pendingToolsMutex.Unlock()
 }
 
 func writeResp(id int, method string, params interface{}) error {

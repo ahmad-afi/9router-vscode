@@ -89,6 +89,8 @@ function sendChatStream(
       if (msg.id !== id) {
         if (msg.method === "tool.terminal") {
           await handleToolTerminal(msg.id, msg.params);
+        } else if (msg.method === "apply.edit") {
+          await handleApplyEdit(msg.id, msg.params);
         }
         return;
       }
@@ -157,6 +159,55 @@ async function handleToolTerminal(toolID: number, params: any): Promise<void> {
   });
 }
 
+async function handleApplyEdit(toolID: number, params: any): Promise<void> {
+  const filePath: string = params?.filePath ?? "";
+  const content: string = params?.content ?? "";
+  const workspacePath: string =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+
+  if (!filePath || !workspacePath) {
+    sendToEngine({
+      id: toolID,
+      method: "tool.result",
+      params: { stdout: "", stderr: "No file path or workspace", exitCode: 1 },
+    });
+    return;
+  }
+
+  const uri = vscode.Uri.joinPath(vscode.Uri.file(workspacePath), filePath);
+
+  const choice = await vscode.window.showWarningMessage(
+    `Apply edit to ${filePath}?`,
+    { modal: true },
+    "Apply",
+    "Cancel"
+  );
+
+  if (choice !== "Apply") {
+    sendToEngine({
+      id: toolID,
+      method: "tool.result",
+      params: { stdout: "", stderr: "Edit rejected by user", exitCode: 1 },
+    });
+    return;
+  }
+
+  try {
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+    sendToEngine({
+      id: toolID,
+      method: "tool.result",
+      params: { stdout: "File written", stderr: "", exitCode: 0 },
+    });
+  } catch (err: any) {
+    sendToEngine({
+      id: toolID,
+      method: "tool.result",
+      params: { stdout: "", stderr: err.message, exitCode: 1 },
+    });
+  }
+}
+
 function getSelection(): { text: string; language: string } {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return { text: "", language: "" };
@@ -192,6 +243,20 @@ export function activate(context: vscode.ExtensionContext) {
     const workspacePath =
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
 
+    const history = chatContext.history
+      .filter((h) => h instanceof vscode.ChatRequestTurn || h instanceof vscode.ChatResponseTurn)
+      .map((h) => {
+        if (h instanceof vscode.ChatRequestTurn) {
+          return { role: "user", content: h.prompt || "" };
+        }
+        const resp = h as vscode.ChatResponseTurn;
+        const text = resp.response
+          .filter((r): r is vscode.ChatResponseMarkdownPart => r instanceof vscode.ChatResponseMarkdownPart)
+          .map((r) => r.value)
+          .join("");
+        return { role: "assistant", content: text };
+      });
+
     let prompt = request.prompt;
     if (request.command === "explain" && text) {
       prompt = `Explain this code:\n\n${prompt}`;
@@ -209,6 +274,7 @@ export function activate(context: vscode.ExtensionContext) {
           endpoint,
           apiKey,
           model,
+          history,
         },
         (chunk) => {
           if (!token.isCancellationRequested) {

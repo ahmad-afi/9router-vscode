@@ -57,6 +57,15 @@ func main() {
 			if !deliverToolResult(req.ID, p) {
 				writeResp(req.ID, "error", ErrorParams{Message: "no pending tool waiter for ID"})
 			}
+		case "apply.edit":
+			var p ApplyEditParams
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+				continue
+			}
+			if err := requestApplyEdit(req.ID, p); err != nil {
+				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+			}
 		default:
 			writeResp(req.ID, "error", ErrorParams{Message: "unknown method: " + req.Method})
 		}

@@ -96,9 +96,9 @@ func TestMainChatInvalidEndpoint(t *testing.T) {
 	input := `{"id":10,"method":"chat","params":{"prompt":"hi","endpoint":"http://127.0.0.1:0","model":"m"}}`
 	out := runBinary(t, input)
 
-	if !contains(out, "chat.chunk") {
+	if !strings.Contains(out, "chat.chunk") {
 		// Should produce some error output
-		if !contains(out, "error") {
+		if !strings.Contains(out, "error") {
 			t.Errorf("expected error or chat output, got: %s", out)
 		}
 	}
