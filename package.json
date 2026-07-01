@@ -1,0 +1,70 @@
+{
+  "name": "9router-vscode",
+  "displayName": "9router",
+  "description": "Connect manually to 9router or any OpenAI-compatible model. Read active selection, execute terminal commands, and stream responses via Chat Participant API. Go core engine.",
+  "version": "0.0.1",
+  "publisher": "ahmad-afi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ahmad-afi/9router-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Machine Learning", "Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "9router.chat",
+        "name": "9router",
+        "description": "Chat with 9router or any OpenAI-compatible model",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the selected code"
+          },
+          {
+            "name": "fix",
+            "description": "Fix the selected code"
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "9router",
+      "properties": {
+        "9router.endpoint": {
+          "type": "string",
+          "default": "http://localhost:3000/v1/chat/completions",
+          "description": "OpenAI-compatible chat completions endpoint URL"
+        },
+        "9router.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the endpoint",
+          "scope": "machine"
+        },
+        "9router.model": {
+          "type": "string",
+          "default": "9router/kombo-cina-free",
+          "description": "Model identifier to use"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --format=cjs",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --format=cjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}
