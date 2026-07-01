@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"sync"
 )
 
 type Request struct {
@@ -36,6 +37,44 @@ type ErrorParams struct {
 }
 
 type DoneParams struct{}
+
+type ToolTerminalParams struct {
+	Command       string `json:"command"`
+	WorkspacePath string `json:"workspacePath"`
+}
+
+type ToolResultParams struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exitCode"`
+}
+
+var (
+	pendingTools      = make(map[int]chan ToolResultParams)
+	pendingToolsMutex sync.Mutex
+)
+
+func registerToolWaiter(id int) chan ToolResultParams {
+	ch := make(chan ToolResultParams, 1)
+	pendingToolsMutex.Lock()
+	pendingTools[id] = ch
+	pendingToolsMutex.Unlock()
+	return ch
+}
+
+func deliverToolResult(id int, result ToolResultParams) bool {
+	pendingToolsMutex.Lock()
+	ch, ok := pendingTools[id]
+	if ok {
+		delete(pendingTools, id)
+	}
+	pendingToolsMutex.Unlock()
+	if !ok {
+		return false
+	}
+	ch <- result
+	return true
+}
 
 func writeResp(id int, method string, params interface{}) error {
 	resp := Response{ID: id, Method: method, Params: params}

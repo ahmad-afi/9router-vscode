@@ -23,8 +23,13 @@ function ensureProc(): ChildProcess {
   if (proc && !proc.killed) return proc;
 
   const enginePath = getEnginePath();
-  const p = spawn(enginePath, [], { stdio: ["pipe", "pipe", "inherit"] });
+  const p = spawn(enginePath, [], { stdio: ["pipe", "pipe", "pipe"] });
   proc = p;
+
+  if (p.stderr) {
+    p.stderr.setEncoding("utf8");
+    p.stderr.on("data", () => {});
+  }
 
   if (!p.stdout) return p;
   p.stdout.setEncoding("utf8");
@@ -54,55 +59,15 @@ function ensureProc(): ChildProcess {
   return p;
 }
 
-function sendRequest(
-  method: string,
-  params: Record<string, unknown>
-): Promise<Record<string, any>> {
-  return new Promise((resolve, reject) => {
-    const p = ensureProc();
-    const id = nextId++;
-    const req = JSON.stringify({ id, method, params }) + "\n";
-
-    const timeout = setTimeout(() => {
-      procListeners = procListeners.filter((l) => l !== listener);
-      reject(new Error("Timeout waiting for Go engine response"));
-    }, 120000);
-
-    const listener = (line: string) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        return;
-      }
-      if (msg.id !== id) return;
-
-      if (msg.method === "chat.chunk" && msg.params?.text) {
-        // streaming — don't resolve yet, but we handle streaming differently
-        return;
-      }
-      if (msg.method === "chat.done") {
-        clearTimeout(timeout);
-        procListeners = procListeners.filter((l) => l !== listener);
-        resolve(msg);
-        return;
-      }
-      if (msg.method === "error") {
-        clearTimeout(timeout);
-        procListeners = procListeners.filter((l) => l !== listener);
-        reject(new Error(msg.params?.message ?? "Unknown error"));
-        return;
-      }
-    };
-
-    procListeners.push(listener);
-    p.stdin?.write(req);
-  });
+function sendToEngine(msg: Record<string, unknown>): void {
+  const p = ensureProc();
+  p.stdin?.write(JSON.stringify(msg) + "\n");
 }
 
 function sendChatStream(
   params: Record<string, unknown>,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  onToolTerminal: (toolID: number, command: string) => Promise<void>
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const p = ensureProc();
@@ -114,14 +79,19 @@ function sendChatStream(
       reject(new Error("Timeout waiting for Go engine response"));
     }, 120000);
 
-    const listener = (line: string) => {
+    const listener = async (line: string) => {
       let msg: any;
       try {
         msg = JSON.parse(line);
       } catch {
         return;
       }
-      if (msg.id !== id) return;
+      if (msg.id !== id) {
+        if (msg.method === "tool.terminal") {
+          await handleToolTerminal(msg.id, msg.params);
+        }
+        return;
+      }
 
       if (msg.method === "chat.chunk" && msg.params?.text) {
         onChunk(msg.params.text);
@@ -143,6 +113,47 @@ function sendChatStream(
 
     procListeners.push(listener);
     p.stdin?.write(req);
+  });
+}
+
+async function handleToolTerminal(toolID: number, params: any): Promise<void> {
+  const command: string = params?.command ?? "";
+  const workspacePath: string = params?.workspacePath ?? "";
+
+  const choice = await vscode.window.showWarningMessage(
+    `Run terminal command?`,
+    { modal: true },
+    "Run",
+    "Cancel"
+  );
+
+  if (choice !== "Run") {
+    sendToEngine({
+      id: toolID,
+      method: "tool.result",
+      params: { stdout: "", stderr: "Command rejected by user", exitCode: 1 },
+    });
+    return;
+  }
+
+  const term = vscode.window.createTerminal("9router exec");
+  term.show();
+
+  if (workspacePath) {
+    const sep = process.platform === "win32" ? ";" : "&&";
+    term.sendText(`cd "${workspacePath}" ${sep} ${command}`);
+  } else {
+    term.sendText(command);
+  }
+
+  sendToEngine({
+    id: toolID,
+    method: "tool.result",
+    params: {
+      stdout: "Command sent to terminal. Check terminal output.",
+      stderr: "",
+      exitCode: 0,
+    },
   });
 }
 
@@ -203,7 +214,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (!token.isCancellationRequested) {
             stream.markdown(chunk);
           }
-        }
+        },
+        async () => {}
       );
     } catch (err: any) {
       stream.markdown(`**Error:** ${err.message}`);

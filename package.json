@@ -12,9 +12,14 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Machine Learning", "Other"],
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "chatParticipants": [
       {
@@ -63,9 +68,9 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/vscode": "^1.90.0",
     "@types/node": "^20.0.0",
-    "esbuild": "^0.23.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.5.0"
   }
 }

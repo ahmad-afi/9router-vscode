@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"sync"
 )
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var wg sync.WaitGroup
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -29,11 +32,35 @@ func main() {
 				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
 				continue
 			}
-		if err := chat(req.ID, p); err != nil {
-			writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
-		}
+			wg.Add(1)
+			go func(id int, params ChatParams) {
+				defer wg.Done()
+				if err := chat(id, params); err != nil {
+					writeResp(id, "error", ErrorParams{Message: err.Error()})
+				}
+			}(req.ID, p)
+		case "tool.terminal":
+			var p ToolTerminalParams
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+				continue
+			}
+			if err := runTerminal(req.ID, p.Command, p.WorkspacePath); err != nil {
+				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+			}
+		case "tool.result":
+			var p ToolResultParams
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+				continue
+			}
+			if !deliverToolResult(req.ID, p) {
+				writeResp(req.ID, "error", ErrorParams{Message: "no pending tool waiter for ID"})
+			}
 		default:
 			writeResp(req.ID, "error", ErrorParams{Message: "unknown method: " + req.Method})
 		}
 	}
+
+	wg.Wait()
 }
