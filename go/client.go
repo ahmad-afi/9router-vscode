@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type chatRequest struct {
@@ -37,7 +38,17 @@ type nonStreamResp struct {
 	} `json:"choices"`
 }
 
-func chat(p ChatParams) error {
+var httpClient = &http.Client{
+	Timeout: 120 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("too many redirects")
+		}
+		return nil
+	},
+}
+
+func chat(reqID int, p ChatParams) error {
 	system := "You are a helpful coding assistant."
 	if p.Selection != "" {
 		system += fmt.Sprintf("\n\nThe user has selected this code (%s):\n```%s\n%s\n```", p.Language, p.Language, p.Selection)
@@ -54,27 +65,27 @@ func chat(p ChatParams) error {
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return writeResp(0, "error", ErrorParams{Message: err.Error()})
+		return writeResp(reqID, "error", ErrorParams{Message: err.Error()})
 	}
 
 	req, err := http.NewRequest("POST", p.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return writeResp(0, "error", ErrorParams{Message: err.Error()})
+		return writeResp(reqID, "error", ErrorParams{Message: err.Error()})
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return writeResp(0, "error", ErrorParams{Message: err.Error()})
+		return writeResp(reqID, "error", ErrorParams{Message: err.Error()})
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		return writeResp(0, "error", ErrorParams{
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return writeResp(reqID, "error", ErrorParams{
 			Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(b)),
 		})
 	}
@@ -95,14 +106,14 @@ func chat(p ChatParams) error {
 			continue
 		}
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			if err := writeResp(0, "chat.chunk", ChunkParams{Text: chunk.Choices[0].Delta.Content}); err != nil {
+			if err := writeResp(reqID, "chat.chunk", ChunkParams{Text: chunk.Choices[0].Delta.Content}); err != nil {
 				return err
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return writeResp(0, "error", ErrorParams{Message: err.Error()})
+		return writeResp(reqID, "error", ErrorParams{Message: err.Error()})
 	}
-	return writeResp(0, "chat.done", DoneParams{})
+	return writeResp(reqID, "chat.done", DoneParams{})
 }

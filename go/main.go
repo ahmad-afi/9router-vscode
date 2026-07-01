@@ -29,9 +29,9 @@ func main() {
 				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
 				continue
 			}
-			if err := chat(p); err != nil {
-				writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
-			}
+		if err := chat(req.ID, p); err != nil {
+			writeResp(req.ID, "error", ErrorParams{Message: err.Error()})
+		}
 		default:
 			writeResp(req.ID, "error", ErrorParams{Message: "unknown method: " + req.Method})
 		}

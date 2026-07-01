@@ -5,23 +5,17 @@ import * as fs from "fs";
 
 let proc: ChildProcess | null = null;
 let procListeners: ((line: string) => void)[] = [];
-let lineBuffer: string[] = [];
+let nextId = 1;
+const MAX_BUF = 10 * 1024 * 1024;
 
 function getEnginePath(): string {
-  const extDir = vscode.extensions.getExtension("ahmad-afi.9router-vscode")?.extensionPath;
-  if (extDir) {
-    const candidate = path.join(extDir, "bin", "engine");
+  const ext = vscode.extensions.getExtension("ahmad-afi.9router-vscode");
+  if (ext) {
+    const candidate = path.join(ext.extensionPath, "bin", "engine");
     if (fs.existsSync(candidate)) return candidate;
   }
-  // dev mode: look relative to workspace
   const devCandidate = path.join(__dirname, "..", "bin", "engine");
   if (fs.existsSync(devCandidate)) return devCandidate;
-  // fallback: look in workspace folder
-  const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (ws) {
-    const wsCandidate = path.join(ws, "bin", "engine");
-    if (fs.existsSync(wsCandidate)) return wsCandidate;
-  }
   return "engine";
 }
 
@@ -37,6 +31,11 @@ function ensureProc(): ChildProcess {
   let buf = "";
   p.stdout.on("data", (chunk: string) => {
     buf += chunk;
+    if (buf.length > MAX_BUF) {
+      buf = "";
+      p.kill();
+      return;
+    }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
@@ -61,7 +60,7 @@ function sendRequest(
 ): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
     const p = ensureProc();
-    const id = Date.now();
+    const id = nextId++;
     const req = JSON.stringify({ id, method, params }) + "\n";
 
     const timeout = setTimeout(() => {
@@ -107,7 +106,7 @@ function sendChatStream(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const p = ensureProc();
-    const id = Date.now();
+    const id = nextId++;
     const req = JSON.stringify({ id, method: "chat", params }) + "\n";
 
     const timeout = setTimeout(() => {

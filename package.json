@@ -40,7 +40,8 @@
         "9router.endpoint": {
           "type": "string",
           "default": "http://localhost:3000/v1/chat/completions",
-          "description": "OpenAI-compatible chat completions endpoint URL"
+          "description": "OpenAI-compatible chat completions endpoint URL",
+          "scope": "machine"
         },
         "9router.apiKey": {
           "type": "string",
